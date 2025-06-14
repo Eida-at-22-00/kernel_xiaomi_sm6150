@@ -22,7 +22,7 @@ ZIPNAME="VantomKernel-KSU-${DEVICE}-$(date '+%Y%m%d-%H%M').zip"
 export ARCH=arm64
 export KBUILD_BUILD_USER=eidawon
 export KBUILD_BUILD_HOST=nekonote
-export PATH="/home/eidawon/axion/prebuilts/clang/host/linux-x86/clang-r536225/bin/:$PATH"
+export PATH="/home/eidawon/axion/prebuilts/clang/host/linux-x86/clang-r547379/bin/:$PATH"
 
 if [[ $1 = "-c" || $1 = "--clean" ]]; then
 	rm -rf out
