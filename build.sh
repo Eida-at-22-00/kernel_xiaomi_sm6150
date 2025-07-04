@@ -1,81 +1,63 @@
 #!/bin/bash
-#
-# Compile script for kernel
-#
 
-SECONDS=0 # builtin bash timer
+set -e
+SECONDS=0
 
-# Allowed codenames
-ALLOWED_CODENAMES=("sweet" "tucana" "toco" "phoenix" "davinci")
+CLANG_DIR="$1"
+ANDROID_VERSION="$2"
 
-# Prompt user for device codename
-read -p "Enter device codename: " DEVICE
+DEVICE="sweet"
+ZIPNAME="galadriel-ln8000-KSU-$(date '+%Y%m%d-%H%M').zip"
 
-# Check if the entered codename is in the allowed list
-if [[ ! " ${ALLOWED_CODENAMES[@]} " =~ " ${DEVICE} " ]]; then
-    echo "Error: Invalid codename. Allowed codenames are: ${ALLOWED_CODENAMES[*]}"
+step() {
+  echo -e "\n==> $1"
+}
+
+if [[ ! -f "$CLANG_DIR/bin/clang" ]]; then
+    echo "Clang not found at $CLANG_DIR"
     exit 1
 fi
 
-ZIPNAME="${DEVICE}-$(date '+%Y%m%d-%H%M').zip"
+step "Cleaning previous build outputs..."
+rm -rf out galadriel-*.zip AK3_tmp
+
+export PATH="$CLANG_DIR/bin:$PATH"
+CLANG_VER=$("$CLANG_DIR/bin/clang" --version | head -n1)
 
 export ARCH=arm64
-export KBUILD_BUILD_USER=aryan
-export KBUILD_BUILD_HOST=celeste
-export PATH="/home/celeste/pixelos/prebuilts/clang/host/linux-x86/clang-r530567/bin/:$PATH"
+export KBUILD_BUILD_USER=galadriel
+export KBUILD_BUILD_HOST=lotr
 
-if [[ $1 = "-c" || $1 = "--clean" ]]; then
-	rm -rf out
-	echo "Cleaned output folder"
-fi
+step "Starting compilation for $DEVICE"
+echo "Android Version: $ANDROID_VERSION"
+echo "Using Clang: $CLANG_VER"
 
-echo -e "\nStarting compilation for $DEVICE...\n"
-make O=out ARCH=arm64 ${DEVICE}_defconfig
-make -j$(nproc) \
-    O=out \
-    ARCH=arm64 \
-    LLVM=1 \
-    LLVM_IAS=1 \
-    CROSS_COMPILE=aarch64-linux-gnu- \
-    CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+make O=out ARCH=arm64 "${DEVICE}_defconfig"
+make -j$(nproc --all) \
+  O=out \
+  ARCH=arm64 \
+  LLVM=1 \
+  LLVM_IAS=1 \
+  CROSS_COMPILE=aarch64-linux-gnu- \
+  CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
 kernel="out/arch/arm64/boot/Image.gz"
 dtbo="out/arch/arm64/boot/dtbo.img"
 dtb="out/arch/arm64/boot/dtb.img"
 
-if [ ! -f "$kernel" ] || [ ! -f "$dtbo" ] || [ ! -f "$dtb" ]; then
-	echo -e "\nCompilation failed!"
-	exit 1
+if [[ ! -f $kernel || ! -f $dtbo || ! -f $dtb ]]; then
+  echo "Missing output files!"
+  exit 1
 fi
 
-echo -e "\nKernel compiled successfully! Zipping up...\n"
+step "Creating flashable zip with AnyKernel3..."
+git clone -q https://github.com/galadriel1402/AnyKernel3 -b master AK3_tmp
+sed -i "s/device\.name1=.*/device.name1=${DEVICE}/" AK3_tmp/anykernel.sh
+sed -i "s/device\.name2=.*/device.name2=${DEVICE}in/" AK3_tmp/anykernel.sh
 
-if [ -d "$AK3_DIR" ]; then
-	cp -r $AK3_DIR AnyKernel3
-else
-	if ! git clone -q https://github.com/basamaryan/AnyKernel3 -b master AnyKernel3; then
-		echo -e "\nAnyKernel3 repo not found locally and couldn't clone from GitHub! Aborting..."
-		exit 1
-	fi
-fi
+cp $kernel $dtbo $dtb AK3_tmp/
+cd AK3_tmp && zip -r9 "../$ZIPNAME" * -x .git && cd ..
+rm -rf AK3_tmp out
 
-# Modify anykernel.sh to replace device names
-sed -i "s/device\.name1=.*/device.name1=${DEVICE}/" AnyKernel3/anykernel.sh
-sed -i "s/device\.name2=.*/device.name2=${DEVICE}in/" AnyKernel3/anykernel.sh
-
-cp $kernel AnyKernel3
-cp $dtbo AnyKernel3
-cp $dtb AnyKernel3
-cd AnyKernel3
-zip -r9 "../$ZIPNAME" * -x .git
-cd ..
-rm -rf AnyKernel3
-echo -e "\nCompleted in $((SECONDS / 60)) minute(s) and $((SECONDS % 60)) second(s) !"
-echo "Zip: $ZIPNAME"
-
-if test -z "$(git rev-parse --show-cdup 2>/dev/null)" &&
-   head=$(git rev-parse --verify HEAD 2>/dev/null); then
-	HASH="$(echo $head | cut -c1-8)"
-fi
-
-telegram -f $ZIPNAME -M "Completed in $((SECONDS / 60)) minute(s) and $((SECONDS % 60)) second(s) ! Latest commit: $HASH"
+step "Build finished in $((SECONDS / 60)) minutes and $((SECONDS % 60)) seconds"
+echo "Output file: $ZIPNAME"
