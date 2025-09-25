@@ -2240,7 +2240,7 @@ long _do_fork(unsigned long clone_flags,
 
         /* Boost CPUs to the max for 100 ms when userspace launches an app */
 	if (task_is_zygote(current))
-		cpu_boost_all(100);
+		cpu_boost_max(100);
 
 	/*
 	 * Determine whether and which event to report to ptracer.  When
