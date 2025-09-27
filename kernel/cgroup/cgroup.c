@@ -4643,57 +4643,62 @@ static int cgroup_procs_write_permission(struct cgroup *src_cgrp,
 
 extern int kp_active_mode(void);
 
-static ssize_t cgroup_procs_write(struct kernfs_open_file *of,
-				  char *buf, size_t nbytes, loff_t off)
+static ssize_t __cgroup_procs_write(struct kernfs_open_file *of,
+                                     char *buf, size_t nbytes, bool threadgroup, loff_t off)
 {
-	struct cgroup_file_ctx *ctx = of->priv;
-	struct cgroup *src_cgrp, *dst_cgrp;
-	struct task_struct *task;
-	const struct cred *saved_cred;
-	ssize_t ret;
+        struct cgroup_file_ctx *ctx = of->priv;
+        struct cgroup *src_cgrp, *dst_cgrp;
+        struct task_struct *task;
+        const struct cred *saved_cred;
+        ssize_t ret;
 
-	dst_cgrp = cgroup_kn_lock_live(of->kn, false);
-	if (!dst_cgrp)
-		return -ENODEV;
+        dst_cgrp = cgroup_kn_lock_live(of->kn, false);
+        if (!dst_cgrp)
+                return -ENODEV;
 
-	task = cgroup_procs_write_start(buf, true);
-	ret = PTR_ERR_OR_ZERO(task);
-	if (ret)
-		goto out_unlock;
+        task = cgroup_procs_write_start(buf, threadgroup);
+        ret = PTR_ERR_OR_ZERO(task);
+        if (ret)
+                goto out_unlock;
 
-	/* find the source cgroup */
-	spin_lock_irq(&css_set_lock);
-	src_cgrp = task_cgroup_from_root(task, &cgrp_dfl_root);
-	spin_unlock_irq(&css_set_lock);
+        spin_lock_irq(&css_set_lock);
+        src_cgrp = task_cgroup_from_root(task, &cgrp_dfl_root);
+        spin_unlock_irq(&css_set_lock);
 
-	/*
-	 * Process and thread migrations follow same delegation rule. Check
-	 * permissions using the credentials from file open to protect against
-	 * inherited fd attacks.
-	 */
-	saved_cred = override_creds(of->file->f_cred);
-	ret = cgroup_procs_write_permission(src_cgrp, dst_cgrp,
-					    of->file->f_path.dentry->d_sb,
-					    ctx->ns);
-	revert_creds(saved_cred);
-	if (ret)
-		goto out_finish;
+        saved_cred = override_creds(of->file->f_cred);
+        ret = cgroup_procs_write_permission(src_cgrp, dst_cgrp,
+                                            of->file->f_path.dentry->d_sb,
+                                            ctx->ns);
+        revert_creds(saved_cred);
+        if (ret)
+                goto out_finish;
 
-	ret = cgroup_attach_task(dst_cgrp, task, true);
+        ret = cgroup_attach_task(dst_cgrp, task, threadgroup);
 
-	/* This covers boosting for app launches and app transitions */
-	if (!ret && !threadgroup &&
-	    !memcmp(of->kn->parent->name, "top-app", sizeof("top-app")) &&
-	    task_is_zygote(task->parent) && kp_active_mode() != 1) {
-		cpu_boost_max(500);
-	}
+        /* This covers boosting for app launches and app transitions */
+        if (!ret && !threadgroup &&
+            !memcmp(of->kn->parent->name, "top-app", sizeof("top-app")) &&
+            task_is_zygote(task->parent) && kp_active_mode() != 1) {
+                cpu_boost_max(500);
+        }
 
 out_finish:
-	cgroup_procs_write_finish(task);
+        cgroup_procs_write_finish(task);
 out_unlock:
-	cgroup_kn_unlock(of->kn);
+        cgroup_kn_unlock(of->kn);
 
-	return ret ?: nbytes;
+        return ret ?: nbytes;
+}
+
+static ssize_t cgroup_procs_write(struct kernfs_open_file *of,
+                                  char *buf, size_t nbytes, loff_t off)
+{
+        bool threadgroup;
+        
+        /* Determine threadgroup based on the kernfs node name */
+        threadgroup = strcmp(of->kn->name, "cgroup.threads") != 0;
+        
+        return __cgroup_procs_write(of, buf, nbytes, threadgroup, off);
 }
 
 static void *cgroup_threads_start(struct seq_file *s, loff_t *pos)
