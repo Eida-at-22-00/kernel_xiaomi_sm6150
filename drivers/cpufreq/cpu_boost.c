@@ -11,13 +11,13 @@
 #include <linux/bitmap.h>
 #include <linux/jiffies.h>
 #include <linux/atomic.h>
-#include <linux/minmax.h>
+#include <linux/kernel.h>
 #include <linux/cpu_boost.h>
 
-static struct freq_qos_request boost_max_req[NR_CPUS];
+static struct pm_qos_request boost_max_req[NR_CPUS];
 static DECLARE_BITMAP(boost_max_active, NR_CPUS);
 
-static struct freq_qos_request boost_kick_req[NR_CPUS];
+static struct pm_qos_request boost_kick_req[NR_CPUS];
 static DECLARE_BITMAP(boost_kick_active, NR_CPUS);
 
 static atomic_long_t boost_expires = ATOMIC_LONG_INIT(0);
@@ -73,9 +73,9 @@ static void cpu_boost_worker(struct work_struct *work)
 		leader = policy->cpu;
 		if (cpu == leader) {
 			if (test_and_clear_bit(leader, boost_max_active))
-				freq_qos_remove_request(&boost_max_req[leader]);
+				pm_qos_remove_request(&boost_max_req[leader]);
 			if (test_and_clear_bit(leader, boost_kick_active))
-				freq_qos_remove_request(&boost_kick_req[leader]);
+				pm_qos_remove_request(&boost_kick_req[leader]);
 		}
 		cpufreq_cpu_put(policy);
 	}
@@ -86,7 +86,7 @@ void cpu_boost_max(unsigned int duration_ms)
 	unsigned long now = jiffies;
 	unsigned long new_exp = now + msecs_to_jiffies(duration_ms);
 	unsigned long old = atomic_long_read(&boost_expires);
-	int cpu, leader, ret;
+	int cpu, leader;
 	struct cpufreq_policy *policy;
 	s32 max_khz;
 
@@ -112,15 +112,10 @@ void cpu_boost_max(unsigned int duration_ms)
 		if (cpu == leader) {
 			max_khz = (s32)policy->cpuinfo.max_freq;
 			if (!test_and_set_bit(leader, boost_max_active)) {
-				ret = freq_qos_add_request(&policy->constraints,
-							   &boost_max_req[leader],
-							   FREQ_QOS_MIN, max_khz);
-				if (ret < 0)
-					clear_bit(leader, boost_max_active);
+				pm_qos_add_request(&boost_max_req[leader], 
+                                   PM_QOS_MIN, max_khz);
 			} else {
-				ret = freq_qos_update_request(&boost_max_req[leader],
-							      max_khz);
-				(void)ret;
+				pm_qos_update_request(&boost_max_req[leader], max_khz);
 			}
 		}
 		cpufreq_cpu_put(policy);
@@ -133,7 +128,7 @@ void cpu_boost_kick(unsigned int duration_ms)
 	unsigned long now = jiffies;
 	unsigned long new_exp = now + msecs_to_jiffies(duration_ms);
 	unsigned long old = atomic_long_read(&boost_expires);
-	int cpu, leader, ret;
+	int cpu, leader;
 	struct cpufreq_policy *policy;
 	s32 req_khz, max_khz;
 
@@ -166,15 +161,10 @@ void cpu_boost_kick(unsigned int duration_ms)
 					req_khz = max_khz;
 
 				if (!test_and_set_bit(leader, boost_kick_active)) {
-					ret = freq_qos_add_request(&policy->constraints,
-								   &boost_kick_req[leader],
-								   FREQ_QOS_MIN, req_khz);
-					if (ret < 0)
-						clear_bit(leader, boost_kick_active);
+					pm_qos_add_request(&boost_kick_req[leader], 
+                                       PM_QOS_MIN, req_khz);
 				} else {
-					ret = freq_qos_update_request(&boost_kick_req[leader],
-								      req_khz);
-					(void)ret;
+					pm_qos_update_request(&boost_kick_req[leader], req_khz);
 				}
 			}
 		}
@@ -185,18 +175,23 @@ void cpu_boost_kick(unsigned int duration_ms)
 EXPORT_SYMBOL_GPL(cpu_boost_kick);
 
 static int boost_policy_notifier(struct notifier_block *nb,
-				 unsigned long val, void *data)
+                                 unsigned long val, void *data)
 {
 	struct cpufreq_policy *policy = data;
-	int leader = policy ? policy->cpu : -1;
-
-	if (val == CPUFREQ_REMOVE_POLICY) {
-		if (leader >= 0 && test_and_clear_bit(leader, boost_max_active))
-			freq_qos_remove_request(&boost_max_req[leader]);
-
-		if (leader >= 0 && test_and_clear_bit(leader, boost_kick_active))
-			freq_qos_remove_request(&boost_kick_req[leader]);
+	int leader;
+	
+	if (!policy)
+		return 0;
+		
+	leader = policy->cpu;
+	
+	if (leader >= 0) {
+		if (test_and_clear_bit(leader, boost_max_active))
+			pm_qos_remove_request(&boost_max_req[leader]);
+		if (test_and_clear_bit(leader, boost_kick_active))
+			pm_qos_remove_request(&boost_kick_req[leader]);
 	}
+	
 	return 0;
 }
 
